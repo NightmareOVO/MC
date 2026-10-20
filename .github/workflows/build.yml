@@ -1,0 +1,74 @@
+name: Build UnBlockMC (Windows x64)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build-windows:
+    name: Build windows-x64 release
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: unblockmc-x64
+
+      - name: Put rust-lld on PATH
+        shell: pwsh
+        run: |
+          $bin = Split-Path -Parent (rustup which rustc)
+          Write-Host "toolchain bin: $bin"
+          if (Test-Path (Join-Path $bin 'rust-lld.exe')) {
+            $bin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+            Write-Host "rust-lld found"
+          } else {
+            Write-Warning "rust-lld not found, will fall back to link.exe"
+            "RUSTFLAGS=-Clinker=link.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
+
+      - name: Show toolchain versions
+        shell: pwsh
+        run: |
+          rustc -V
+          cargo -V
+          rustup show active-toolchain
+          (Get-Command rc.exe -ErrorAction SilentlyContinue).Source
+
+      - name: Build release
+        run: cargo build --release --locked
+
+      - name: Verify binary
+        shell: pwsh
+        run: |
+          $exe = "target\release\unblockmc.exe"
+          if (-not (Test-Path $exe)) { throw "build artifact missing: $exe" }
+          $f = Get-Item $exe
+          "size: {0:N0} bytes" -f $f.Length
+          (Get-FileHash $exe -Algorithm SHA256).Hash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UnBlockMC-windows-x64
+          path: target/release/unblockmc.exe
+          if-no-files-found: error
+          retention-days: 90
